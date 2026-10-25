@@ -1,0 +1,5 @@
+{"ts": 1792903267.0, "profile": "reviewer", "kind": "tool_blocked", "tool": "write_file", "how": "plugin_block", "why": "reviewer is read-only", "session": "lab-cr-01", "LAB": "fake"}
+{"ts": 1792912402.0, "profile": "client-desk", "kind": "tool_blocked", "tool": "send_message", "how": "approval_denied", "why": "send to unknown number needs approval", "session": "lab-ac-07", "LAB": "fake"}
+{"ts": 1792912431.0, "profile": "client-desk", "kind": "tool_blocked", "tool": "send_message", "how": "approval_denied", "why": "send to unknown number needs approval", "session": "lab-ac-07", "LAB": "fake"}
+{"ts": 1792912470.0, "profile": "client-desk", "kind": "tool_blocked", "tool": "terminal", "how": "dangerous_denied", "why": "delete command denied", "session": "lab-ac-07", "LAB": "fake"}
+{"ts": 1792921812.0, "profile": "thinking-partner", "kind": "tool_blocked", "tool": "browser_navigate", "how": "plugin_block", "why": "thinking-partner is read-only", "session": "lab-ly-03", "LAB": "fake"}
