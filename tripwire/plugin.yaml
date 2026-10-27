@@ -1,10 +1,11 @@
 name: tripwire
-version: 0.1.0
+version: 0.1.1
 manifest_version: 2
 api_version: 1
 description: Records every refused agent action (blocked tool, denied approval) to a shared file so the owner can be alerted. Observer only; stores no arguments or content.
 author: Deploy Axiom
 license: MIT
+requires_hermes: ">=0.22.5"
 platforms: [macos, linux]
 provides_hooks:
   - post_tool_call

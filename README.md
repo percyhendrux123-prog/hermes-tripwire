@@ -19,6 +19,14 @@ One line per refusal, with these fields: time, agent profile, tool, how it was s
 - It only watches. It never blocks anything, and if it hits an error it gets out of the way (it fails open).
 - **Known gap:** if a model calls a tool that isn't in its toolset at all, Hermes rejects the call before any plugin hook runs, so Tripwire doesn't see it.
 
+## Before you install
+
+- **Files it writes:** one line per refusal to `~/.hermes/tripwire/events.jsonl` (or the path in `TRIPWIRE_EVENTS`). The notifier keeps its read position in the same folder.
+- **Files it reads:** the `TEST_BLOCK` switch in that folder. While that file exists, the plugin blocks the one tool it names for the one profile it names. That is the only time Tripwire blocks anything, and it exists to prove the alarm works.
+- **Network:** none. Alerts go out only through the Hermes cron delivery you choose.
+- **Shell commands, background processes, stored credentials, telemetry:** none.
+- Tested on Hermes 0.22.5, macOS. Uses `fcntl`, so macOS and Linux only.
+
 ## Install
 
 1. Copy the `tripwire/` folder to `~/.hermes/plugins/tripwire`, then enable it in every profile you want watched:
