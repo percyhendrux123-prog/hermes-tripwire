@@ -1,5 +1,5 @@
 name: tripwire
-version: 0.1.1
+version: 0.1.2
 manifest_version: 2
 api_version: 1
 description: Records every refused agent action (blocked tool, denied approval) to a shared file so the owner can be alerted. Observer only; stores no arguments or content.

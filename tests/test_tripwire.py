@@ -24,6 +24,17 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(ev["tool"], "send_message")
         self.assertEqual(ev["ts"], 100.0)
 
+    def test_argument_typos_are_not_trips(self):
+        for msg in ("tool_call to 'x' failed argument validation at arguments (additionalProperties)",
+                    "tool_call to 'x' is missing required argument(s): data."):
+            self.assertIsNone(core.from_tool_call("ops", tool_name="tool_call", status="blocked",
+                                                  error_type="tool_scope_block", error_message=msg))
+
+    def test_scope_block_without_typo_is_still_a_trip(self):
+        self.assertIsNotNone(core.from_tool_call("ops", tool_name="tool_call", status="blocked",
+                                                 error_type="tool_scope_block",
+                                                 error_message="tool 'send_message' is not allowed here"))
+
     def test_housekeeping_blocks_are_ignored(self):
         self.assertIsNone(core.from_tool_call("ops", tool_name="x", status="blocked",
                                               error_type="suspected_pruned_tool_arguments"))

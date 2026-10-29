@@ -13,6 +13,9 @@ EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS", str(Path.home() / ".hermes" / "t
 
 # Blocks that are housekeeping, not security.
 IGNORE_ERROR_TYPES = {"suspected_pruned_tool_arguments"}
+# Typo-level rejections: the model sent a wrong or missing argument name and the
+# call was bounced before running. Not a refused action; the agent retries.
+IGNORE_MESSAGE_MARKERS = ("failed argument validation", "is missing required argument")
 TRIP_CHOICES = {"deny", "denied", "smart_deny", "blocked", "cancelled", "timeout"}
 
 
@@ -36,6 +39,9 @@ def from_tool_call(profile, *, tool_name, status, error_type=None, error_message
     if status != "blocked":
         return None
     if error_type in IGNORE_ERROR_TYPES:
+        return None
+    msg = str(error_message or "").lower()
+    if any(m in msg for m in IGNORE_MESSAGE_MARKERS):
         return None
     return {"ts": now or time.time(), "profile": profile, "kind": "tool_blocked",
             "tool": _short(tool_name, 60), "how": _short(error_type, 40),

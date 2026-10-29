@@ -12,6 +12,14 @@ from pathlib import Path
 BASE = Path(os.environ.get("TRIPWIRE_DIR", str(Path.home() / ".hermes" / "tripwire")))
 EVENTS = BASE / "events.jsonl"
 STATE = BASE / "notify-offset"
+# Typo-level rejections (wrong/missing argument name, bounced before running).
+# Kept in events.jsonl for the record but not alerted. Mirrors tripwire/core.py.
+QUIET_MARKERS = ("failed argument validation", "is missing required argument")
+
+
+def _is_quiet(e):
+    why = str(e.get("why", "")).lower()
+    return e.get("kind") == "tool_blocked" and any(m in why for m in QUIET_MARKERS)
 
 
 def main():
@@ -35,6 +43,7 @@ def main():
         except json.JSONDecodeError:
             pass
     STATE.write_text(str(offset + len(chunk[:end].encode())))
+    events = [e for e in events if not _is_quiet(e)]
     if not events:
         return
     by_agent = Counter(e.get("profile", "?") for e in events)

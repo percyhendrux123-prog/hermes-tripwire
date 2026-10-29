@@ -17,6 +17,7 @@ One line per refusal, with these fields: time, agent profile, tool, how it was s
 - It never stores tool arguments, results or message text.
 - The reason is the refusal message, cut to 120 characters. Some refusal messages name the rule that fired, so read your own log once before you share it.
 - It only watches. It never blocks anything, and if it hits an error it gets out of the way (it fails open).
+- **Not alerted:** calls bounced because the model sent a wrong or missing argument name (for example "failed argument validation"). Nothing was refused; the agent just retries. These are housekeeping, so the notifier skips them.
 - **Known gap:** if a model calls a tool that isn't in its toolset at all, Hermes rejects the call before any plugin hook runs, so Tripwire doesn't see it.
 
 ## Before you install
