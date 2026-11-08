@@ -82,7 +82,7 @@ The plugin writer, drill switch and standalone notifier use the **same contract*
 | Drill switch | `TEST_BLOCK` beside the effective event file |
 | Notifier cursor | `notify-offset` beside the effective event file |
 
-Use a dedicated data directory and absolute override paths (`~` is expanded in Python). The writer tightens its data-directory permissions; do not point it at a shared working directory. Set the same environment in every watched profile/gateway and the notifier's cron process, then restart the gateway after changes. These paths are deliberately shared, not derived from `HERMES_HOME` or the active profile. An override is not isolation unless all of those processes use it. Empty overrides fall back to defaults.
+Use a dedicated data directory and absolute override paths (`~` is expanded in Python). Event filenames `notify-offset` and `TEST_BLOCK` (case-insensitively) are reserved and rejected so the cursor or drill cannot overwrite the log. The writer tightens its data-directory permissions; do not point it at a shared working directory. Set the same environment in every watched profile/gateway and the notifier's cron process, then restart the gateway after changes. These paths are deliberately shared, not derived from `HERMES_HOME` or the active profile. An override is not isolation unless all of those processes use it. Empty overrides fall back to defaults.
 
 ## Prove it works
 

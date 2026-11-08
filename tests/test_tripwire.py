@@ -146,6 +146,7 @@ class PathTests(unittest.TestCase):
             cases = [({}, home / ".hermes" / "tripwire" / "events.jsonl"),
                      ({"TRIPWIRE_DIR": str(base)}, base / "events.jsonl"),
                      ({"TRIPWIRE_EVENTS": str(custom)}, custom),
+                     ({"TRIPWIRE_DIR": "~tripwire_nonexistent_a288_user", "TRIPWIRE_EVENTS": str(custom)}, custom),
                      ({"TRIPWIRE_DIR": str(base), "TRIPWIRE_EVENTS": str(custom)}, custom)]
             for overrides, expected in cases:
                 with self.subTest(overrides=overrides):
@@ -164,6 +165,22 @@ class PathTests(unittest.TestCase):
                     self.assertEqual(json.loads(result.stdout),
                                      [str(expected), str(expected.parent / "TEST_BLOCK"),
                                       str(expected), str(expected.parent / "notify-offset")])
+
+
+    def test_reserved_event_filenames_are_rejected_without_modifying_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("notify-offset", "TEST_BLOCK", "Notify-Offset", "test_block"):
+                with self.subTest(name=name):
+                    path = Path(d) / name
+                    original = json.dumps(core.from_tool_call("ops", tool_name="terminal", status="blocked")) + "\n"
+                    path.write_text(original)
+                    env = dict(os.environ, TRIPWIRE_EVENTS=str(path))
+                    for command in ([sys.executable, "-c", "import tripwire"],
+                                    [sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")]):
+                        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("reserved", result.stderr)
+                        self.assertEqual(path.read_text(), original)
 
 
 class NotifierTests(unittest.TestCase):

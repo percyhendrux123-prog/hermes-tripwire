@@ -13,8 +13,10 @@ import time
 from collections import Counter
 from pathlib import Path
 
-BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire").expanduser()
+BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire")
 EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS") or BASE / "events.jsonl").expanduser()
+if EVENTS.name.casefold() in {"notify-offset", "test_block"}:
+    raise ValueError("TRIPWIRE_EVENTS uses a reserved cursor/drill filename")
 STATE = EVENTS.parent / "notify-offset"
 # Typo-level rejections (wrong/missing argument name, bounced before running).
 # Kept in legacy events.jsonl files but not alerted. Mirrors tripwire/core.py.

@@ -10,8 +10,10 @@ import re
 import time
 from pathlib import Path
 
-BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire").expanduser()
+BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire")
 EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS") or BASE / "events.jsonl").expanduser()
+if EVENTS.name.casefold() in {"notify-offset", "test_block"}:
+    raise ValueError("TRIPWIRE_EVENTS uses a reserved cursor/drill filename")
 
 # Blocks that are housekeeping, not security.
 IGNORE_ERROR_TYPES = {"suspected_pruned_tool_arguments"}
