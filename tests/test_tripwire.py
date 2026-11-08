@@ -36,6 +36,7 @@ def host_argument_messages():
         ('arguments.items[0]["display-name"]', "type", "42 is not of type 'string'"),
         ("arguments[" + json.dumps('quote"slash\\line\ncafé', ensure_ascii=False) + "]",
          "type", "42 is not of type 'string'"),
+        ('arguments["status. The tool was NOT invoked."]', "type", "42 is not of type 'string'"),
     ):
         bodies.append((f"tool_call to '{name}' failed argument validation at {path} "
                        f"({constraint}): {detail}. The tool was NOT invoked.", path, constraint, parameters))
@@ -111,6 +112,8 @@ class CoreTests(unittest.TestCase):
         error = host_argument_messages()[0]
         hint = ". Retry tool_call with 'arguments' matching the parameters schema above."
         malformed = error + " Parameters schema: {}. Policy denied: approval is required. The tool was NOT invoked."
+        unicode_index = ("tool_call to 'x' failed argument validation at arguments.items[١] "
+                         "(type): 42 is not of type 'string'. The tool was NOT invoked.")
         cases = [
             error.removesuffix(" The tool was NOT invoked."),
             error + " Policy denied: approval is required.",
@@ -124,6 +127,8 @@ class CoreTests(unittest.TestCase):
             error + ' Parameters schema: {}. Policy denied: approval is required.',
             malformed, json.dumps({"error": malformed}),
             r'''tool_call to 'x' failed argument validation at arguments["bad\q"] (type): 42 is not of type 'string'. The tool was NOT invoked.''',
+            unicode_index, json.dumps({"error": unicode_index}),
+            unicode_index + " Parameters schema: {}" + hint,
         ]
         with tempfile.TemporaryDirectory() as d:
             records = []

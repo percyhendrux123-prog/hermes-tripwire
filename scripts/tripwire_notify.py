@@ -22,9 +22,9 @@ STATE = EVENTS.parent / "notify-offset"
 # Kept in legacy events.jsonl files but not alerted. Mirrors tripwire/core.py.
 ARGUMENT_REJECTION = re.compile(
     r"tool_call to '[A-Za-z0-9_.:/-]+' (?:"
-    r'failed argument validation at arguments(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:\d+|"(?:[^\x00-\x1f"\\]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")\])* '
-    r"\([A-Za-z]+\): [^\r\n]+"
-    r"|is missing required argument\(s\): [\s\S]*)\. The tool was NOT invoked\."
+    r'failed argument validation at arguments(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:[0-9]+|"(?:[^\x00-\x1f"\\]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")\])* '
+    r"\([A-Za-z]+\): [^\r\n]+?"
+    r"|is missing required argument\(s\): [\s\S]*?)\. The tool was NOT invoked\."
 )
 
 
@@ -44,11 +44,12 @@ def _is_argument_rejection(message):
         message = payload.get("error") if isinstance(payload, dict) else None
         if not isinstance(message, str):
             return False
-    # Split before matching so a repeated marker cannot turn a malformed schema
-    # trailer into validation detail and bypass wrapper checks.
-    error, marker, trailer = message.partition(". The tool was NOT invoked.")
-    if not marker or ARGUMENT_REJECTION.fullmatch(error + marker) is None:
+    # Parse the header/path before finding the terminator (it can occur inside
+    # a quoted property name). Lazy detail prevents swallowing a bad trailer.
+    match = ARGUMENT_REJECTION.match(message)
+    if match is None:
         return False
+    trailer = message[match.end():]
     if not trailer:
         return True
     prefix = " Parameters schema: "
