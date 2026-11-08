@@ -72,6 +72,28 @@ class CoreTests(unittest.TestCase):
         ev = core.from_approval("ops", choice="deny", pattern_key="rm -rf", now=5.0)
         self.assertEqual(ev["kind"], "approval_refused")
 
+    def test_event_storage_is_owner_only_even_with_permissive_umask(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "data" / "tripwire" / "events.jsonl"
+            old_umask = os.umask(0)
+            try:
+                core.write_event({"a": 1}, path)
+            finally:
+                os.umask(old_umask)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(path.parent.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_existing_event_storage_is_tightened(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "events.jsonl"
+            path.write_text("")
+            path.chmod(0o644)
+            path.parent.chmod(0o755)
+            core.write_event({"a": 1}, path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+
     def test_write_event_appends_one_line(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "events.jsonl"

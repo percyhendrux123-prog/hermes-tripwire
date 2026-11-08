@@ -27,12 +27,28 @@ def _identifier(value):
     return "unknown"
 
 
+def private_directory(path: Path) -> None:
+    """Create missing data directories privately; tighten the data directory."""
+    missing = []
+    parent = path
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+    path.chmod(0o700)
+
+
 def write_event(event: dict, path: Path = EVENTS) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_directory(path.parent)
     line = json.dumps(event, ensure_ascii=False) + "\n"
-    with open(path, "a") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o600)
         fcntl.flock(f, fcntl.LOCK_EX)
         f.write(line)
+        f.flush()
         fcntl.flock(f, fcntl.LOCK_UN)
 
 
