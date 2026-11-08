@@ -6,10 +6,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tripwire"))
 import core  # noqa: E402
+sys.path.insert(0, str(ROOT / "scripts"))
+import tripwire_notify as notifier  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
@@ -108,8 +111,81 @@ class NotifierTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")],
                               env=env, capture_output=True, text=True, check=True).stdout
 
+    def test_malformed_records_do_not_lose_valid_alerts(self):
+        with tempfile.TemporaryDirectory() as d:
+            event = core.from_tool_call("ops", tool_name="terminal", status="blocked", now=100.0)
+            bad = [b"[]", b"null", b"42", b'"text"', b"{bad", b"\xff",
+                   b"[" * 20000 + b"0" + b"]" * 20000,
+                   json.dumps(dict(event, ts="not a timestamp")).encode(),
+                   json.dumps(dict(event, ts=1e300)).encode(),
+                   json.dumps(dict(event, profile=[])).encode(), b"{}"]
+            complete = b"\n".join([json.dumps(event).encode(), *bad,
+                                       json.dumps(dict(event, profile="reviewer")).encode()]) + b"\n"
+            path = Path(d) / "events.jsonl"
+            path.write_bytes(complete + b'{"partial":')
+            result = subprocess.run([sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")],
+                                    env=dict(os.environ, TRIPWIRE_DIR=d), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("TRIPWIRE: 2 refused action(s)", result.stdout)
+            self.assertIn("ops: terminal", result.stdout)
+            self.assertIn("reviewer: terminal", result.stdout)
+            self.assertIn(f"skipped {len(bad)} malformed record(s)", result.stderr)
+            self.assertEqual(int((Path(d) / "notify-offset").read_text()), len(complete))
+            self.assertEqual(self.run_notify(d), "")
+
     def test_silent_when_nothing_happened(self):
         with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.run_notify(d), "")
+
+    def test_output_failure_keeps_cursor_for_retry(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.jsonl"
+            state = Path(d) / "notify-offset"
+            events.write_text((ROOT / "examples" / "events.sample.jsonl").read_text())
+            state.write_text("0")
+            with patch.object(notifier, "EVENTS", events), patch.object(notifier, "STATE", state):
+                with patch("builtins.print", side_effect=BrokenPipeError):
+                    with self.assertRaises(BrokenPipeError):
+                        notifier.main()
+            self.assertEqual(state.read_text(), "0")
+            self.assertIn("TRIPWIRE: 5 refused action(s)", self.run_notify(d))
+
+    def test_cursor_is_atomically_replaced_after_render(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.jsonl"
+            state = Path(d) / "notify-offset"
+            events.write_text((ROOT / "examples" / "events.sample.jsonl").read_text())
+            state.write_text("0")
+            with patch.object(notifier, "EVENTS", events), patch.object(notifier, "STATE", state):
+                with patch("builtins.print") as output, patch.object(notifier.os, "replace") as replace:
+                    def check_replace(source, target):
+                        output.assert_called_once()
+                        self.assertEqual(state.read_text(), "0")
+                        self.assertEqual(target, state)
+                        self.assertEqual(int(Path(source).read_text()), events.stat().st_size)
+                        raise OSError("synthetic replace failure")
+                    replace.side_effect = check_replace
+                    with self.assertRaises(OSError):
+                        notifier.main()
+                    replace.assert_called_once()
+            self.assertEqual(state.read_text(), "0")
+            self.assertFalse(list(Path(d).glob(".notify-offset-*")))
+            self.run_notify(d)
+            self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+
+    def test_partial_utf8_record_is_consumed_only_after_newline(self):
+        with tempfile.TemporaryDirectory() as d:
+            event = core.from_tool_call("ops", tool_name="terminal", status="blocked", now=100.0)
+            record = json.dumps(dict(event, why="legacy café"), ensure_ascii=False).encode() + b"\n"
+            path = Path(d) / "events.jsonl"
+            split = record.index("é".encode()) + 1
+            path.write_bytes(record[:split])
+            self.assertEqual(self.run_notify(d), "")
+            self.assertFalse((Path(d) / "notify-offset").exists())
+            with path.open("ab") as f:
+                f.write(record[split:])
+            self.assertIn("TRIPWIRE: 1 refused action(s)", self.run_notify(d))
+            self.assertEqual(int((Path(d) / "notify-offset").read_text()), len(record))
             self.assertEqual(self.run_notify(d), "")
 
     def test_alerts_once_then_goes_quiet(self):

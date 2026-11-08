@@ -4,7 +4,11 @@ refused-action events; prints nothing when there are none (= silent).
 Reads ~/.hermes/tripwire/events.jsonl from a saved byte offset.
 """
 import json
+import math
 import os
+import re
+import sys
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -13,7 +17,7 @@ BASE = Path(os.environ.get("TRIPWIRE_DIR", str(Path.home() / ".hermes" / "tripwi
 EVENTS = BASE / "events.jsonl"
 STATE = BASE / "notify-offset"
 # Typo-level rejections (wrong/missing argument name, bounced before running).
-# Kept in events.jsonl for the record but not alerted. Mirrors tripwire/core.py.
+# Kept in legacy events.jsonl files but not alerted. Mirrors tripwire/core.py.
 QUIET_MARKERS = ("failed argument validation", "is missing required argument")
 
 
@@ -22,39 +26,90 @@ def _is_quiet(e):
     return e.get("kind") == "tool_blocked" and any(m in why for m in QUIET_MARKERS)
 
 
+def _valid_event(e):
+    if not isinstance(e, dict):
+        return False
+    if not isinstance(e.get("kind"), str) or e["kind"] not in {"tool_blocked", "approval_refused"}:
+        return False
+    for key in ("profile", "tool", "how"):
+        value = e.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,79}", value):
+            return False
+    ts = e.get("ts")
+    if type(ts) not in (int, float):
+        return False
+    try:
+        if not math.isfinite(ts) or ts < 0:
+            return False
+        time.strftime("%-I:%M %p", time.localtime(ts))
+    except (ValueError, OverflowError, OSError):
+        return False
+    return True
+
+
+def _save_offset(offset):
+    """Replace the cursor atomically; failed renders/writes leave it retryable."""
+    STATE.parent.chmod(0o700)
+    fd, name = tempfile.mkstemp(prefix=".notify-offset-", dir=STATE.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            os.fchmod(f.fileno(), 0o600)
+            f.write(str(offset))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, STATE)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main():
     if not EVENTS.exists():
         return
-    offset = int(STATE.read_text().strip() or 0) if STATE.exists() else 0
+    try:
+        offset = int(STATE.read_text().strip() or 0) if STATE.exists() else 0
+    except ValueError:
+        offset = 0
     size = EVENTS.stat().st_size
-    if size < offset:  # file was rotated/cleared
+    if offset < 0 or size < offset:  # file was rotated/cleared or cursor corrupt
         offset = 0
     if size == offset:
         return
-    with open(EVENTS) as f:
+    with open(EVENTS, "rb") as f:
         f.seek(offset)
         chunk = f.read()
-    # only consume complete lines
-    end = chunk.rfind("\n") + 1
-    events = []
-    for line in chunk[:end].splitlines():
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
-    STATE.write_text(str(offset + len(chunk[:end].encode())))
-    events = [e for e in events if not _is_quiet(e)]
-    if not events:
+    # Use byte offsets and only consume complete lines, even across UTF-8 writes.
+    end = chunk.rfind(b"\n") + 1
+    if not end:
         return
-    by_agent = Counter(e.get("profile", "?") for e in events)
-    lines = [f"TRIPWIRE: {len(events)} refused action(s) since last check"]
-    for e in events[-8:]:
-        t = time.strftime("%-I:%M %p", time.localtime(e.get("ts", 0)))
-        lines.append(f"- {t} {e.get('profile')}: {e.get('tool')} stopped ({e.get('how')}).")
-    if len(events) > 8:
-        lines.append(f"(+{len(events) - 8} more; by agent: {dict(by_agent)})")
-    lines.append("Each of these was stopped. Say 'check the tripwire' to have your agent look into it.")
-    print("\n".join(lines))
+    events = []
+    malformed = 0
+    for line in chunk[:end].split(b"\n")[:-1]:
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            malformed += 1
+            continue
+        if not _valid_event(event):
+            malformed += 1
+            continue
+        if not _is_quiet(event):
+            events.append(event)
+    if malformed:
+        print(f"TRIPWIRE: skipped {malformed} malformed record(s)", file=sys.stderr, flush=True)
+    if events:
+        by_agent = Counter(e["profile"] for e in events)
+        lines = [f"TRIPWIRE: {len(events)} refused action(s) since last check"]
+        for e in events[-8:]:
+            t = time.strftime("%-I:%M %p", time.localtime(e["ts"]))
+            lines.append(f"- {t} {e['profile']}: {e['tool']} stopped ({e['how']}).")
+        if len(events) > 8:
+            lines.append(f"(+{len(events) - 8} more; by agent: {dict(by_agent)})")
+        lines.append("Each of these was stopped. Say 'check the tripwire' to have your agent look into it.")
+        print("\n".join(lines), flush=True)
+    # Delivery beyond stdout is Hermes cron's responsibility. A crash before
+    # this replace may repeat alerts, but must not silently consume them.
+    _save_offset(offset + end)
 
 
 if __name__ == "__main__":
