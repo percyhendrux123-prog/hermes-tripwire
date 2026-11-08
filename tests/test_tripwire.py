@@ -38,6 +38,26 @@ class CoreTests(unittest.TestCase):
                                                  error_type="tool_scope_block",
                                                  error_message="tool 'send_message' is not allowed here"))
 
+    def test_policy_blocks_mentioning_validation_still_alert(self):
+        cases = [
+            ("plugin_block", "tool_call to 'x' failed argument validation at arguments (additionalProperties)"),
+            ("plugin_block", "Policy denied: failed argument validation is not a bypass"),
+            ("tool_scope_block", "Policy denied: tool_call to 'x' is missing required argument(s): data."),
+            ("tool_scope_block", "The policy is missing required argument approval"),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "events.jsonl"
+            for category, message in cases:
+                with self.subTest(category=category, message=message):
+                    event = core.from_tool_call("ops", tool_name="tool_call", status="blocked",
+                                                error_type=category, error_message=message)
+                    self.assertIsNotNone(event)
+                    core.write_event(event, path)
+            env = dict(os.environ, TRIPWIRE_DIR=d)
+            result = subprocess.run([sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")],
+                                    env=env, capture_output=True, text=True, check=True)
+            self.assertIn(f"TRIPWIRE: {len(cases)} refused action(s)", result.stdout)
+
     def test_housekeeping_blocks_are_ignored(self):
         self.assertIsNone(core.from_tool_call("ops", tool_name="x", status="blocked",
                                               error_type="suspected_pruned_tool_arguments"))
@@ -135,6 +155,19 @@ class NotifierTests(unittest.TestCase):
 
     def test_silent_when_nothing_happened(self):
         with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.run_notify(d), "")
+
+    def test_legacy_suppression_requires_category_and_message_shape(self):
+        with tempfile.TemporaryDirectory() as d:
+            event = core.from_tool_call("ops", tool_name="tool_call", status="blocked", now=100.0)
+            typo = "tool_call to 'x' failed argument validation at arguments (additionalProperties)"
+            records = [dict(event, how="tool_scope_block", why=typo),
+                       dict(event, how="plugin_block", why=typo),
+                       dict(event, how="tool_scope_block", why=f"Policy denied: {typo}")]
+            (Path(d) / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in records))
+            output = self.run_notify(d)
+            self.assertIn("TRIPWIRE: 2 refused action(s)", output)
+            self.assertNotIn(typo, output)
             self.assertEqual(self.run_notify(d), "")
 
     def test_output_failure_keeps_cursor_for_retry(self):

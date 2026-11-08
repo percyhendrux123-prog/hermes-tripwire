@@ -18,12 +18,17 @@ EVENTS = BASE / "events.jsonl"
 STATE = BASE / "notify-offset"
 # Typo-level rejections (wrong/missing argument name, bounced before running).
 # Kept in legacy events.jsonl files but not alerted. Mirrors tripwire/core.py.
-QUIET_MARKERS = ("failed argument validation", "is missing required argument")
+ARGUMENT_REJECTION = re.compile(
+    r"tool_call to '[A-Za-z0-9_.:/-]+' (?:"
+    r"failed argument validation at arguments(?:\.[A-Za-z0-9_]+|\[\d+\])* \([A-Za-z]+\)"
+    r"|is missing required argument\(s\): [A-Za-z0-9_]+(?:, [A-Za-z0-9_]+)*\.)"
+)
 
 
 def _is_quiet(e):
-    why = str(e.get("why", "")).lower()
-    return e.get("kind") == "tool_blocked" and any(m in why for m in QUIET_MARKERS)
+    why = e.get("why")
+    return (e.get("kind") == "tool_blocked" and e.get("how") == "tool_scope_block"
+            and isinstance(why, str) and ARGUMENT_REJECTION.fullmatch(why) is not None)
 
 
 def _valid_event(e):
