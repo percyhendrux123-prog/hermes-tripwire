@@ -50,7 +50,7 @@ def main():
     lines = [f"TRIPWIRE: {len(events)} refused action(s) since last check"]
     for e in events[-8:]:
         t = time.strftime("%-I:%M %p", time.localtime(e.get("ts", 0)))
-        lines.append(f"- {t} {e.get('profile')}: {e.get('tool')} stopped ({e.get('how')}). {e.get('why', '')}".rstrip())
+        lines.append(f"- {t} {e.get('profile')}: {e.get('tool')} stopped ({e.get('how')}).")
     if len(events) > 8:
         lines.append(f"(+{len(events) - 8} more; by agent: {dict(by_agent)})")
     lines.append("Each of these was stopped. Say 'check the tripwire' to have your agent look into it.")

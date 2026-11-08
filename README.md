@@ -12,10 +12,10 @@ That is the point of Tripwire. It records what happened instead of asking the ag
 
 ## What it records, and what it doesn't
 
-One line per refusal, with these fields: time, agent profile, tool, how it was stopped, a short reason, and the session id.
+One line per refusal, with exactly five fields: timestamp (`ts`), agent profile (`profile`), event kind (`kind`), tool identifier (`tool`), and rejection category or approval choice (`how`).
 
-- It never stores tool arguments, results or message text.
-- The reason is the refusal message, cut to 120 characters. Some refusal messages name the rule that fired, so read your own log once before you share it.
+- No refusal-message snippets, approval-rule text, session ids, surface names, tool arguments, commands, results or message text are stored. Profile, tool and category values must be identifier-shaped (1–80 ASCII letters/digits or `_.:/-`, starting with a letter/digit/underscore); other values become `unknown`. Do not put sensitive data in identifier names.
+- Logs from versions before 0.1.3 may contain refusal-message or rule fragments. Upgrading does not erase old records; review or remove those yourself before sharing a log.
 - It only watches. It never blocks anything, and if it hits an error it gets out of the way (it fails open).
 - **Not alerted:** calls bounced because the model sent a wrong or missing argument name (for example "failed argument validation"). Nothing was refused; the agent just retries. These are housekeeping, so the notifier skips them.
 - **Known gap:** if a model calls a tool that isn't in its toolset at all, Hermes rejects the call before any plugin hook runs, so Tripwire doesn't see it.

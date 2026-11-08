@@ -6,6 +6,7 @@ results or message text: only who, which tool, how it was stopped, and when.
 import fcntl
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -19,9 +20,11 @@ IGNORE_MESSAGE_MARKERS = ("failed argument validation", "is missing required arg
 TRIP_CHOICES = {"deny", "denied", "smart_deny", "blocked", "cancelled", "timeout"}
 
 
-def _short(text, n=120):
-    text = " ".join(str(text or "").split())
-    return text[:n]
+def _identifier(value):
+    """Keep host identifiers, not free-form messages or truncated content."""
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,79}", value):
+        return value
+    return "unknown"
 
 
 def write_event(event: dict, path: Path = EVENTS) -> None:
@@ -43,16 +46,15 @@ def from_tool_call(profile, *, tool_name, status, error_type=None, error_message
     msg = str(error_message or "").lower()
     if any(m in msg for m in IGNORE_MESSAGE_MARKERS):
         return None
-    return {"ts": now or time.time(), "profile": profile, "kind": "tool_blocked",
-            "tool": _short(tool_name, 60), "how": _short(error_type, 40),
-            "why": _short(error_message), "session": _short(session_id, 80)}
+    return {"ts": now if now is not None else time.time(),
+            "profile": _identifier(profile), "kind": "tool_blocked",
+            "tool": _identifier(tool_name), "how": _identifier(error_type)}
 
 
 def from_approval(profile, *, choice, pattern_key=None, surface=None, session_key=None, now=None):
     """post_approval_response -> event, or None when the action was allowed."""
     if str(choice) not in TRIP_CHOICES:
         return None
-    return {"ts": now or time.time(), "profile": profile, "kind": "approval_refused",
-            "tool": "terminal/approval", "how": _short(choice, 40),
-            "why": f"rule: {_short(pattern_key, 60)}", "surface": _short(surface, 20),
-            "session": _short(session_key, 80)}
+    return {"ts": now if now is not None else time.time(),
+            "profile": _identifier(profile), "kind": "approval_refused",
+            "tool": "terminal/approval", "how": choice}

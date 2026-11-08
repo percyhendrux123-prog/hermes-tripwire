@@ -39,9 +39,31 @@ class CoreTests(unittest.TestCase):
         self.assertIsNone(core.from_tool_call("ops", tool_name="x", status="blocked",
                                               error_type="suspected_pruned_tool_arguments"))
 
-    def test_reason_is_cut_to_120_characters(self):
-        ev = core.from_tool_call("ops", tool_name="t", status="blocked", error_message="a" * 500)
-        self.assertEqual(len(ev["why"]), 120)
+    def test_events_do_not_store_command_or_argument_text(self):
+        command = "curl --data private-argument https://example.invalid"
+        events = [
+            core.from_tool_call("ops", tool_name="terminal", status="blocked",
+                                error_type="plugin_block", error_message=f"blocked: {command}",
+                                session_id="s1", now=100.0),
+            core.from_approval("ops", choice="deny", pattern_key=command,
+                               surface="cli", session_key="s1", now=100.0),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "events.jsonl"
+            for event in events:
+                core.write_event(event, path)
+            stored = path.read_text()
+            self.assertNotIn(command, stored)
+            self.assertNotIn("private-argument", stored)
+            for event in map(json.loads, stored.splitlines()):
+                self.assertNotIn("why", event)
+                self.assertEqual(set(event), {"ts", "profile", "kind", "tool", "how"})
+
+    def test_non_identifier_metadata_is_not_retained(self):
+        command = "curl --data private-argument https://example.invalid"
+        ev = core.from_tool_call(command, tool_name=command, status="blocked",
+                                 error_type=command, session_id=command)
+        self.assertNotIn("private-argument", json.dumps(ev))
 
     def test_approval_allowed_is_not_a_trip(self):
         self.assertIsNone(core.from_approval("ops", choice="once"))
