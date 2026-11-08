@@ -13,9 +13,9 @@ import time
 from collections import Counter
 from pathlib import Path
 
-BASE = Path(os.environ.get("TRIPWIRE_DIR", str(Path.home() / ".hermes" / "tripwire")))
-EVENTS = BASE / "events.jsonl"
-STATE = BASE / "notify-offset"
+BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire").expanduser()
+EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS") or BASE / "events.jsonl").expanduser()
+STATE = EVENTS.parent / "notify-offset"
 # Typo-level rejections (wrong/missing argument name, bounced before running).
 # Kept in legacy events.jsonl files but not alerted. Mirrors tripwire/core.py.
 ARGUMENT_REJECTION = re.compile(

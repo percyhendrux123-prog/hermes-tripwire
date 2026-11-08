@@ -16,48 +16,90 @@ One line per refusal, with exactly five fields: timestamp (`ts`), agent profile 
 
 - No refusal-message snippets, approval-rule text, session ids, surface names, tool arguments, commands, results or message text are stored. Profile, tool and category values must be identifier-shaped (1–80 ASCII letters/digits or `_.:/-`, starting with a letter/digit/underscore); other values become `unknown`. Do not put sensitive data in identifier names.
 - Logs from versions before 0.1.3 may contain refusal-message or rule fragments. Upgrading does not erase old records; review or remove those yourself before sharing a log.
-- It only watches. It never blocks anything, and if it hits an error it gets out of the way (it fails open).
+- It only watches, except for the explicit `TEST_BLOCK` drill switch described below. If recording hits an error, the plugin gets out of the way (it fails open). A storage failure can therefore mean a missed record.
 - **Not alerted:** housekeeping blocks tagged `suspected_pruned_tool_arguments`, and `tool_scope_block` rejections matching the host's complete `tool_call to '…' failed argument validation at arguments… (…)` or `tool_call to '…' is missing required argument(s): ….` typo templates. Other categories, policy reasons merely containing those phrases, or unrecognized message shapes still alert. New typo rejections are not written; the notifier applies the same narrow filter to legacy records.
 - **Known gap:** if a model calls a tool that isn't in its toolset at all, Hermes rejects the call before any plugin hook runs, so Tripwire doesn't see it.
 
 ## Before you install
 
-- **Files it writes:** one line per refusal to `~/.hermes/tripwire/events.jsonl` (or the path in `TRIPWIRE_EVENTS`). The notifier keeps its read position in the same folder.
-- **Files it reads:** the `TEST_BLOCK` switch in that folder. While that file exists, the plugin blocks the one tool it names for the one profile it names. That is the only time Tripwire blocks anything, and it exists to prove the alarm works.
-- **Network:** none. Alerts go out only through the Hermes cron delivery you choose.
-- **Shell commands, background processes, stored credentials, telemetry:** none.
-- Tested on Hermes 0.22.5, macOS. Uses `fcntl`, so macOS and Linux only.
+- **Files it writes:** one line per refusal to `~/.hermes/tripwire/events.jsonl` by default, shared across profiles. Data directories are created as 0700 and the event file as 0600; existing data-directory/event-file modes are tightened before appending. Event-file symlinks are refused. The optional notifier reads that file and its `notify-offset` cursor, and writes a 0600 temporary cursor then atomically replaces `notify-offset` in the same directory. It does not erase or rotate events.
+- **Files it reads:** the `TEST_BLOCK` switch beside the effective event file. While that file exists, the plugin blocks the one tool it names for the one profile it names. That is the only time Tripwire blocks anything, and it exists to prove the alarm works.
+- **Network at runtime:** none. Alerts go out only through the Hermes cron delivery you choose. The optional manual notifier download below contacts GitHub at setup time.
+- **Runtime shell commands, background processes, stored credentials, telemetry:** none.
+- Requires Hermes >=0.22.5. Uses Python's `fcntl`, so macOS and Linux only. Synthetic tests run on Linux/Python 3.12; native installation and cron delivery must be checked on your Hermes host.
 
 ## Install
 
-1. Copy the `tripwire/` folder to `~/.hermes/plugins/tripwire`, then enable it in every profile you want watched:
-   ```
-   hermes plugins enable tripwire
-   hermes -p <profile> plugins enable tripwire
-   ```
-2. Copy `scripts/tripwire_notify.py` to `~/.hermes/scripts/`, then schedule it with no agent, so no model runs and no tokens are spent:
-   ```
-   hermes cron create "every 5m" --name "Tripwire alerts" --script tripwire_notify.py --no-agent --deliver telegram
-   ```
-   Any delivery target Hermes supports works. Empty output means a silent run.
-3. Restart the gateway so the plugin loads.
+Use the reviewed catalog pin, not an unpinned repository URL:
 
-Events go to `~/.hermes/tripwire/events.jsonl`. Set `TRIPWIRE_DIR` to point the notifier at a different folder, which is how I run drills without touching the real log.
+```sh
+hermes plugins install tripwire
+hermes plugins enable tripwire
+```
+
+For another profile, install and enable there too:
+
+```sh
+hermes -p <profile> plugins install tripwire
+hermes -p <profile> plugins enable tripwire
+```
+
+Check the installed version and record the exact 40-hex commit shown at installation. This README describes 0.1.3; if the catalog still points at an older version, these fixes are not installed yet. Do not replace a reviewed pin with a branch-tip install to work around that. The catalog installs the `tripwire/` subtree, including its MIT `LICENSE`.
+
+### Optional notifier (separate download)
+
+The catalog does **not** install `scripts/tripwire_notify.py`. Obtain it from the **same full commit SHA as your installed plugin**, not `main`, a version label or a different catalog revision. Replace the placeholder below with the recorded pin, then download and inspect the readable Python before scheduling it:
+
+```sh
+TRIPWIRE_SHA='<40-hex SHA of your installed catalog pin>'
+mkdir -p "$HOME/.hermes/scripts"
+curl --fail --location --proto '=https' \
+  "https://raw.githubusercontent.com/percyhendrux123-prog/hermes-tripwire/${TRIPWIRE_SHA}/scripts/tripwire_notify.py" \
+  --output "$HOME/.hermes/scripts/tripwire_notify.py"
+```
+
+The repository's README, source and root LICENSE are also available at that exact SHA. When updating the plugin, update this separate script to the new installed pin too. From a local checkout already at that pin, copying `scripts/tripwire_notify.py` is equivalent.
+
+Schedule it with no agent, so no model runs and no tokens are spent:
+
+```sh
+hermes cron create "every 5m" --name "Tripwire alerts" --script tripwire_notify.py --no-agent --deliver telegram
+```
+
+Any delivery target Hermes supports works. Empty stdout means a silent run. The notifier validates each complete JSON line, skips malformed records and reports their count on stderr without echoing content. It flushes the valid alert to stdout before atomically advancing the byte cursor; failures before cursor replacement can repeat an alert rather than silently lose it. Hermes cron owns delivery after stdout, so this is not a receipt that a message reached you. Alerts show the last eight refusals plus a count/agent summary of any earlier ones in that batch; full records remain in the log.
+
+Restart the gateway after enabling the plugin so it loads. For local development only, copying the entire `tripwire/` directory (including LICENSE) to `~/.hermes/plugins/tripwire` and enabling it is the manual alternative; this bypasses catalog pin review.
+
+## Paths and overrides
+
+The plugin writer, drill switch and standalone notifier use the **same contract**:
+
+| Setting | Effective path |
+|---|---|
+| No overrides | `~/.hermes/tripwire/events.jsonl` |
+| `TRIPWIRE_DIR` | `<TRIPWIRE_DIR>/events.jsonl` |
+| `TRIPWIRE_EVENTS` | That exact event-file path; takes precedence over `TRIPWIRE_DIR` |
+| Drill switch | `TEST_BLOCK` beside the effective event file |
+| Notifier cursor | `notify-offset` beside the effective event file |
+
+Use a dedicated data directory and absolute override paths (`~` is expanded in Python). The writer tightens its data-directory permissions; do not point it at a shared working directory. Set the same environment in every watched profile/gateway and the notifier's cron process, then restart the gateway after changes. These paths are deliberately shared, not derived from `HERMES_HOME` or the active profile. An override is not isolation unless all of those processes use it. Empty overrides fall back to defaults.
 
 ## Prove it works
 
-```
-echo "default terminal" > ~/.hermes/tripwire/TEST_BLOCK
+The commands below use the default path. If you set an override, use `TEST_BLOCK` beside your effective event file instead.
+
+```sh
+(umask 077; mkdir -p -m 700 "$HOME/.hermes/tripwire"; printf '%s\n' 'default terminal' > "$HOME/.hermes/tripwire/TEST_BLOCK")
 ```
 That blocks the terminal tool for the `default` profile only. Ask an agent to run any command, check that the event line and the alert both show up, then turn the switch off:
-```
-rm ~/.hermes/tripwire/TEST_BLOCK
+```sh
+rm "$HOME/.hermes/tripwire/TEST_BLOCK"
 ```
 
 ## Try it with no install
 
 ```
-python3 -m unittest discover tests
+python3 -m unittest discover -s tests
 TRIPWIRE_DIR=$(mktemp -d) sh -c 'cp examples/events.sample.jsonl $TRIPWIRE_DIR/events.jsonl && python3 scripts/tripwire_notify.py'
 ```
 `examples/events.sample.jsonl` is fake drill data.

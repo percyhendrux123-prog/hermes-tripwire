@@ -1,15 +1,14 @@
 """Tripwire: record every refused agent action so the owner gets alerted.
 
-Observer only (fails open). The single exception is the test switch file
-~/.hermes/tripwire/TEST_BLOCK ("<profile> <tool>"), used to prove the alarm.
+Observer only (fails open). The single exception is the TEST_BLOCK switch
+beside the effective event file ("<profile> <tool>"), used to prove the alarm.
 """
 import logging
-from pathlib import Path
 
-from .core import from_approval, from_tool_call, write_event
+from .core import EVENTS, from_approval, from_tool_call, write_event
 
 log = logging.getLogger(__name__)
-TEST_FLAG = Path.home() / ".hermes" / "tripwire" / "TEST_BLOCK"
+TEST_FLAG = EVENTS.parent / "TEST_BLOCK"
 
 
 def register(ctx):

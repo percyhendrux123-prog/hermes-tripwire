@@ -125,6 +125,47 @@ class CoreTests(unittest.TestCase):
             self.assertEqual([json.loads(l)["a"] for l in p.read_text().splitlines()], [1, 2])
 
 
+class PackagingTests(unittest.TestCase):
+    def test_installed_subtree_keeps_license(self):
+        self.assertEqual((ROOT / "tripwire" / "LICENSE").read_bytes(), (ROOT / "LICENSE").read_bytes())
+
+    def test_release_and_catalog_install_documentation(self):
+        self.assertIn("version: 0.1.3\n", (ROOT / "tripwire" / "plugin.yaml").read_text())
+        readme = (ROOT / "README.md").read_text()
+        for command in ("hermes plugins install tripwire", "hermes plugins enable tripwire"):
+            self.assertIn(command, readme)
+        self.assertIn("${TRIPWIRE_SHA}/scripts/tripwire_notify.py", readme)
+
+
+class PathTests(unittest.TestCase):
+    def test_writer_notifier_and_drill_share_path_overrides(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d) / "home"
+            base = Path(d) / "custom-data"
+            custom = Path(d) / "other-data" / "refusals.jsonl"
+            cases = [({}, home / ".hermes" / "tripwire" / "events.jsonl"),
+                     ({"TRIPWIRE_DIR": str(base)}, base / "events.jsonl"),
+                     ({"TRIPWIRE_EVENTS": str(custom)}, custom),
+                     ({"TRIPWIRE_DIR": str(base), "TRIPWIRE_EVENTS": str(custom)}, custom)]
+            for overrides, expected in cases:
+                with self.subTest(overrides=overrides):
+                    env = dict(os.environ, HOME=str(home))
+                    env.pop("TRIPWIRE_DIR", None)
+                    env.pop("TRIPWIRE_EVENTS", None)
+                    env.update(overrides)
+                    code = (
+                        "import json; import tripwire; from tripwire import core; "
+                        "from scripts import tripwire_notify as notify; "
+                        "print(json.dumps([str(core.EVENTS), str(tripwire.TEST_FLAG), "
+                        "str(notify.EVENTS), str(notify.STATE)]))"
+                    )
+                    result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env,
+                                            capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(result.stdout),
+                                     [str(expected), str(expected.parent / "TEST_BLOCK"),
+                                      str(expected), str(expected.parent / "notify-offset")])
+
+
 class NotifierTests(unittest.TestCase):
     def run_notify(self, d):
         env = dict(os.environ, TRIPWIRE_DIR=d)

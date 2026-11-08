@@ -10,7 +10,8 @@ import re
 import time
 from pathlib import Path
 
-EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS", str(Path.home() / ".hermes" / "tripwire" / "events.jsonl")))
+BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire").expanduser()
+EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS") or BASE / "events.jsonl").expanduser()
 
 # Blocks that are housekeeping, not security.
 IGNORE_ERROR_TYPES = {"suspected_pruned_tool_arguments"}

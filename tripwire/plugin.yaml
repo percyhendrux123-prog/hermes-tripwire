@@ -1,5 +1,5 @@
 name: tripwire
-version: 0.1.2
+version: 0.1.3
 manifest_version: 2
 api_version: 1
 description: Records refused agent actions to a shared file using only timestamp, profile/tool identifiers, event kind and rejection category or approval choice; no message or rule snippets, arguments, results or session ids. Fails open except for the explicit TEST_BLOCK drill switch.
