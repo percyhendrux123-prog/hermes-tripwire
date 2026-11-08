@@ -22,15 +22,51 @@ STATE = EVENTS.parent / "notify-offset"
 # Kept in legacy events.jsonl files but not alerted. Mirrors tripwire/core.py.
 ARGUMENT_REJECTION = re.compile(
     r"tool_call to '[A-Za-z0-9_.:/-]+' (?:"
-    r"failed argument validation at arguments(?:\.[A-Za-z0-9_]+|\[\d+\])* \([A-Za-z]+\)"
-    r"|is missing required argument\(s\): [A-Za-z0-9_]+(?:, [A-Za-z0-9_]+)*\.)"
+    r'failed argument validation at arguments(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:\d+|"(?:[^\x00-\x1f"\\]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")\])* '
+    r"\([A-Za-z]+\): [^\r\n]+"
+    r"|is missing required argument\(s\): [\s\S]*)\. The tool was NOT invoked\."
 )
+
+
+def _is_argument_rejection(message):
+    """Recognize bare, tool_error JSON and sequentially flattened host errors.
+
+    Kept identical in the standalone notifier, which is downloaded separately.
+    Unknown or malformed wrappers fail noisy rather than hiding a policy block.
+    """
+    if not isinstance(message, str):
+        return False
+    if message.lstrip().startswith("{"):
+        try:
+            payload = json.loads(message)
+        except (ValueError, RecursionError):
+            return False
+        message = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(message, str):
+            return False
+    # Split before matching so a repeated marker cannot turn a malformed schema
+    # trailer into validation detail and bypass wrapper checks.
+    error, marker, trailer = message.partition(". The tool was NOT invoked.")
+    if not marker or ARGUMENT_REJECTION.fullmatch(error + marker) is None:
+        return False
+    if not trailer:
+        return True
+    prefix = " Parameters schema: "
+    if not trailer.startswith(prefix):
+        return False
+    schema = trailer[len(prefix):]
+    try:
+        parameters, end = json.JSONDecoder().raw_decode(schema)
+    except (ValueError, RecursionError):
+        return False
+    return (isinstance(parameters, dict) and schema[end:] ==
+            ". Retry tool_call with 'arguments' matching the parameters schema above.")
 
 
 def _is_quiet(e):
     why = e.get("why")
     return (e.get("kind") == "tool_blocked" and e.get("how") == "tool_scope_block"
-            and isinstance(why, str) and ARGUMENT_REJECTION.fullmatch(why) is not None)
+            and _is_argument_rejection(why))
 
 
 def _valid_event(e):

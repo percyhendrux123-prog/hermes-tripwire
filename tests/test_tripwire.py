@@ -15,6 +15,53 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import tripwire_notify as notifier  # noqa: E402
 
 
+def host_argument_messages():
+    """Replay Hermes 2bd378ed1b's validation/registry/executor message builders.
+
+    tools/tool_search_validation.py:68-71,99-101,125-133 builds the body;
+    tools/registry.py:1101-1104 JSON-encodes it; agent/tool_executor.py:424-430
+    flattens that JSON for sequential dispatch. No host dependency or network.
+    """
+    hint = "Retry tool_call with 'arguments' matching the parameters schema above."
+    parameters = {"type": "object", "required": ["data"],
+                  "properties": {"data": {"type": "string", "description": "café"}}}
+    name = "mcp__demo__x"
+    bodies = []
+    for missing in (["data"], [""], ["line\nbreak", "carriage\rreturn"]):
+        bodies.append((f"tool_call to '{name}' is missing required argument(s): "
+                       f"{', '.join(missing)}. The tool was NOT invoked.", "arguments", "required",
+                       dict(parameters, required=missing)))
+    for path, constraint, detail in (
+        ("arguments", "additionalProperties", "Additional properties are not allowed ('typo' was unexpected)"),
+        ('arguments.items[0]["display-name"]', "type", "42 is not of type 'string'"),
+        ("arguments[" + json.dumps('quote"slash\\line\ncafé', ensure_ascii=False) + "]",
+         "type", "42 is not of type 'string'"),
+    ):
+        bodies.append((f"tool_call to '{name}' failed argument validation at {path} "
+                       f"({constraint}): {detail}. The tool was NOT invoked.", path, constraint, parameters))
+    messages = []
+    for error, path, constraint, params in bodies:
+        probe = {"error": error, "path": path, "constraint": constraint,
+                 "parameters": params, "hint": hint}
+        flattened = (f"{probe.get('error', '')} Parameters schema: "
+                     f"{json.dumps(probe.get('parameters', {}), ensure_ascii=False)}. "
+                     f"{probe.get('hint', '')}").strip()
+        messages.extend((error, json.dumps(probe, ensure_ascii=False), flattened))
+    return messages
+
+
+def policy_argument_messages():
+    """Policy prefixes outside a host message or inside its JSON error field."""
+    messages = []
+    for message in host_argument_messages():
+        messages.append(f"Policy denied: {message}")
+        if message.startswith("{"):
+            payload = json.loads(message)
+            payload["error"] = f"Policy denied: {payload['error']}"
+            messages.append(json.dumps(payload, ensure_ascii=False))
+    return messages
+
+
 class CoreTests(unittest.TestCase):
     def test_allowed_tool_call_is_not_a_trip(self):
         self.assertIsNone(core.from_tool_call("ops", tool_name="terminal", status="ok"))
@@ -27,11 +74,11 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(ev["tool"], "send_message")
         self.assertEqual(ev["ts"], 100.0)
 
-    def test_argument_typos_are_not_trips(self):
-        for msg in ("tool_call to 'x' failed argument validation at arguments (additionalProperties)",
-                    "tool_call to 'x' is missing required argument(s): data."):
-            self.assertIsNone(core.from_tool_call("ops", tool_name="tool_call", status="blocked",
-                                                  error_type="tool_scope_block", error_message=msg))
+    def test_host_argument_typos_are_not_trips(self):
+        for msg in host_argument_messages():
+            with self.subTest(message=msg):
+                self.assertIsNone(core.from_tool_call("ops", tool_name="tool_call", status="blocked",
+                                                     error_type="tool_scope_block", error_message=msg))
 
     def test_scope_block_without_typo_is_still_a_trip(self):
         self.assertIsNotNone(core.from_tool_call("ops", tool_name="tool_call", status="blocked",
@@ -45,6 +92,8 @@ class CoreTests(unittest.TestCase):
             ("tool_scope_block", "Policy denied: tool_call to 'x' is missing required argument(s): data."),
             ("tool_scope_block", "The policy is missing required argument approval"),
         ]
+        cases.extend(("plugin_block", msg) for msg in host_argument_messages())
+        cases.extend(("tool_scope_block", msg) for msg in policy_argument_messages())
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "events.jsonl"
             for category, message in cases:
@@ -57,6 +106,45 @@ class CoreTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")],
                                     env=env, capture_output=True, text=True, check=True)
             self.assertIn(f"TRIPWIRE: {len(cases)} refused action(s)", result.stdout)
+
+    def test_unknown_or_malformed_argument_messages_still_alert(self):
+        error = host_argument_messages()[0]
+        hint = ". Retry tool_call with 'arguments' matching the parameters schema above."
+        malformed = error + " Parameters schema: {}. Policy denied: approval is required. The tool was NOT invoked."
+        cases = [
+            error.removesuffix(" The tool was NOT invoked."),
+            error + " Policy denied: approval is required.",
+            "tool_call to 'x' failed argument validation at arguments (type)",
+            json.dumps({"error": "Policy denied: approval is required.", "hint": error}),
+            json.dumps({"error": None}), json.dumps({"error": [error]}),
+            json.dumps([{"error": error}]), '{"error":', None, 42,
+            '{"error":' + "[" * 2000 + "0" + "]" * 2000 + "}",
+            error + " Parameters schema: not-json" + hint,
+            error + " Parameters schema: []" + hint,
+            error + ' Parameters schema: {}. Policy denied: approval is required.',
+            malformed, json.dumps({"error": malformed}),
+            r'''tool_call to 'x' failed argument validation at arguments["bad\q"] (type): 42 is not of type 'string'. The tool was NOT invoked.''',
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            records = []
+            for message in cases:
+                with self.subTest(message=message):
+                    event = core.from_tool_call("ops", tool_name="tool_call", status="blocked",
+                                                error_type="tool_scope_block", error_message=message)
+                    self.assertIsNotNone(event)
+                    legacy = dict(event, why=message)
+                    self.assertFalse(notifier._is_quiet(legacy))
+                    records.append(legacy)
+            (Path(d) / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in records))
+            result = subprocess.run([sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")],
+                                    env=dict(os.environ, TRIPWIRE_DIR=d), capture_output=True, text=True,
+                                    check=True)
+            self.assertIn(f"TRIPWIRE: {len(cases)} refused action(s)", result.stdout)
+            self.assertEqual(result.stderr, "")
+
+    def test_writer_and_standalone_notifier_patterns_stay_in_sync(self):
+        self.assertEqual(core.ARGUMENT_REJECTION.pattern, notifier.ARGUMENT_REJECTION.pattern)
+        self.assertEqual(core.ARGUMENT_REJECTION.flags, notifier.ARGUMENT_REJECTION.flags)
 
     def test_housekeeping_blocks_are_ignored(self):
         self.assertIsNone(core.from_tool_call("ops", tool_name="x", status="blocked",
@@ -218,14 +306,17 @@ class NotifierTests(unittest.TestCase):
     def test_legacy_suppression_requires_category_and_message_shape(self):
         with tempfile.TemporaryDirectory() as d:
             event = core.from_tool_call("ops", tool_name="tool_call", status="blocked", now=100.0)
-            typo = "tool_call to 'x' failed argument validation at arguments (additionalProperties)"
-            records = [dict(event, how="tool_scope_block", why=typo),
-                       dict(event, how="plugin_block", why=typo),
-                       dict(event, how="tool_scope_block", why=f"Policy denied: {typo}")]
+            records = []
+            for typo in host_argument_messages():
+                records.extend((dict(event, how="tool_scope_block", why=typo),
+                                dict(event, how="plugin_block", why=typo)))
+            records.extend(dict(event, how="tool_scope_block", why=msg)
+                           for msg in policy_argument_messages())
             (Path(d) / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in records))
             output = self.run_notify(d)
-            self.assertIn("TRIPWIRE: 2 refused action(s)", output)
-            self.assertNotIn(typo, output)
+            expected = len(host_argument_messages()) + len(policy_argument_messages())
+            self.assertIn(f"TRIPWIRE: {expected} refused action(s)", output)
+            self.assertNotIn("The tool was NOT invoked.", output)
             self.assertEqual(self.run_notify(d), "")
 
     def test_output_failure_keeps_cursor_for_retry(self):
