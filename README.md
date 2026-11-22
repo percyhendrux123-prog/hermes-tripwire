@@ -1,5 +1,7 @@
 # Tripwire for Hermes Agent
 
+> **Part of the seat**, a collection of Hermes plugins that work together: watch, decide, act, prove, hand off. This one covers **watch**: it writes down every time the agent is told no. [See the whole collection](https://github.com/percyhendrux123-prog#the-seat-a-collection-of-hermes-plugins).
+
 When one of my agents gets told no, I want to know.
 
 Tripwire is a small plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Every time an agent is refused an action, it writes one line to a log. A refusal can be a tool blocked by a guardrail or another plugin, or a risky command denied, cancelled or timed out at approval. A scheduled job then reads the new lines and sends you one short alert. If nothing was refused, you hear nothing.
