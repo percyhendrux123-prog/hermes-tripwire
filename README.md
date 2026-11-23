@@ -136,6 +136,15 @@ I designed it, set the rules for what it may record, and tested it on my own sys
 
 Percy Keith, Deploy Axiom. MIT license.
 
+## Also for Claude Code
+
+The same idea ships as a Claude Code plugin in [`claude-plugin/tripwire`](claude-plugin/tripwire). It writes one line per refusal to `~/.claude/tripwire/events.jsonl` (owner-only, same five fields, fails open) using Claude Code's `PermissionDenied` hook event, which fires when auto mode denies a tool call. Refusals that Claude Code does not report to hooks, such as a permission dialog you decline yourself or a `deny` rule, are not logged; the plugin README lists these gaps. It is separate from the Hermes plugin above and needs neither Hermes nor the notifier.
+
+```sh
+claude plugin marketplace add percyhendrux123-prog/hermes-tripwire
+claude plugin install tripwire@deploy-axiom-tripwire
+```
+
 ## Works with
 
 Tripwire is one part of an operator layer for Hermes Agent, built by Deploy Axiom. Each plugin installs on its own and none requires another. Together they cover a working agent from first reply to finished task:
