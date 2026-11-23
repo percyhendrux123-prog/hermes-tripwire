@@ -138,7 +138,7 @@ Percy Keith, Deploy Axiom. MIT license.
 
 ## Also for Claude Code
 
-The same idea ships as a Claude Code plugin in [`claude-plugin/tripwire`](claude-plugin/tripwire). It writes one line per refusal to `~/.claude/tripwire/events.jsonl` (owner-only, same five fields, fails open) using Claude Code's `PermissionDenied` hook event, which fires when auto mode denies a tool call. Refusals that Claude Code does not report to hooks, such as a permission dialog you decline yourself or a `deny` rule, are not logged; the plugin README lists these gaps. It is separate from the Hermes plugin above and needs neither Hermes nor the notifier.
+The same idea ships as a Claude Code plugin in [`claude-plugin/tripwire`](claude-plugin/tripwire). It writes one line per refusal to `~/.claude/tripwire/events.jsonl` (owner-only, same five fields, fails open). A settings hook uses Claude Code's `PermissionDenied` event for auto mode refusals, and a small mod (v0.2.0) catches the ones hooks are not told about: a `deny` rule, a `PreToolUse` hook block, a permission dialog you decline, and a call that needed approval with nobody to ask. Some refusals are still not logged; the plugin README lists these gaps. It is separate from the Hermes plugin above and needs neither Hermes nor the notifier.
 
 ```sh
 claude plugin marketplace add percyhendrux123-prog/hermes-tripwire

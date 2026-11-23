@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Tripwire for Claude Code: one log line per refused tool call.
 
-Reads one hook event as JSON on stdin and, for a PermissionDenied event,
-appends one line with exactly five fields (ts, profile, kind, tool, how) to
-an owner-only file. Tool arguments, commands, paths, denial text and message
-text are never read into the record. Python 3 standard library only.
+Reads one JSON event on stdin and appends one line with exactly five fields
+(ts, profile, kind, tool, how) to an owner-only file. Two senders exist: the
+PermissionDenied settings hook (auto mode refusals), and the plugin's mod
+(hooks/register.js), which sends a small pre-classified record for refusals the
+settings hook cannot see. Tool arguments, commands, paths, denial text and
+message text are never read into the record. Python 3 standard library only.
 
 Fails open: whatever goes wrong, this script exits 0 and prints nothing, so it
 can never block, delay-by-error or change a Claude Code session.
@@ -30,6 +32,17 @@ DEFAULT_PARTS = (".claude", "tripwire", "events.jsonl")
 # refused" belong here. PostToolUseFailure is not one of them: the docs say it
 # does not fire for permission denials, only for calls that ran and failed.
 KINDS = {"PermissionDenied": "permission_denied"}
+
+# Records sent by the mod (hooks/register.js) carry "tripwire_mod": 1 and a
+# kind/how pair that the mod already reduced to these fixed labels. Anything
+# outside the table is dropped (kind) or written as "unspecified" (how), so the
+# mod cannot put free text in the log even by mistake.
+MOD_KINDS = {
+    # decided without asking anyone: the verdict itself was "deny"
+    "tool_blocked": ("deny_rule", "pretooluse_hook", "other_policy"),
+    # asked, and the answer was no (or nobody could be asked)
+    "permission_declined": ("user_declined", "no_approver", "dont_ask_mode"),
+}
 
 
 def identifier(value):
@@ -65,10 +78,20 @@ def build_event(payload, now=None):
     """Hook payload -> the five-field event, or None when it is not a refusal."""
     if not isinstance(payload, dict):
         return None
-    event_name = payload.get("hook_event_name")
-    kind = KINDS.get(event_name) if isinstance(event_name, str) else None
-    if kind is None:
-        return None
+    how = None
+    marker = payload.get("tripwire_mod")
+    if type(marker) is int and marker == 1:  # not True: bool is an int subclass
+        kind = payload.get("kind")
+        if not isinstance(kind, str) or kind not in MOD_KINDS:
+            return None
+        label = payload.get("how")
+        how = label if isinstance(label, str) and label in MOD_KINDS[kind] else "unspecified"
+    else:
+        event_name = payload.get("hook_event_name")
+        kind = KINDS.get(event_name) if isinstance(event_name, str) else None
+        if kind is None:
+            return None
+        how = how_category(payload.get("reason"))
     # Profile is the subagent/agent type when the denial happened in one,
     # otherwise the main session. Claude Code has no profile concept.
     agent = payload.get("agent_type")
@@ -77,7 +100,7 @@ def build_event(payload, now=None):
         "profile": identifier(agent) if agent else "main",
         "kind": kind,
         "tool": identifier(payload.get("tool_name")),
-        "how": how_category(payload.get("reason")),
+        "how": how,
     }
 
 

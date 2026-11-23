@@ -255,7 +255,7 @@ class TestManifests(unittest.TestCase):
         manifest = self.load(".claude-plugin", "plugin.json")
         self.assertEqual(manifest["name"], "axiom-tripwire")
         self.assertRegex(manifest["name"], r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.2.0")
         self.assertEqual(manifest["license"], "MIT")
         self.assertEqual(manifest["author"]["name"], "Deploy Axiom")
         url = "https://github.com/percyhendrux123-prog/hermes-tripwire"
