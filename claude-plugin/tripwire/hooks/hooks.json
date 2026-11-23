@@ -1,4 +1,8 @@
 {
+  "description": "Tripwire: PermissionDenied settings hook for auto mode refusals, and a mod for the refusals settings hooks cannot see",
+  "modules": [
+    "./register.js"
+  ],
   "hooks": {
     "PermissionDenied": [
       {
@@ -6,7 +10,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/tripwire_hook.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/hooks/tripwire_hook.py"
+            ],
             "timeout": 10
           }
         ]

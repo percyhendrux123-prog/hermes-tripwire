@@ -1,8 +1,8 @@
 {
   "name": "axiom-tripwire",
   "displayName": "Tripwire",
-  "version": "0.1.0",
-  "description": "Writes one private log line each time Claude Code's auto mode refuses a tool call. Five identifier fields only: no commands, arguments, paths or messages.",
+  "version": "0.2.0",
+  "description": "Writes one private log line each time Claude Code refuses a tool call: auto mode denials, deny rules, hook blocks, declined permission dialogs, and calls that needed approval with nobody to ask. Five identifier fields only: no commands, arguments, paths or messages.",
   "author": {
     "name": "Deploy Axiom"
   },
@@ -15,6 +15,7 @@
     "permissions",
     "auto-mode",
     "hooks",
+    "mod",
     "logging"
   ],
   "icon": "./.claude-plugin/icon.png"
