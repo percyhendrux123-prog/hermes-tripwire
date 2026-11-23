@@ -1,8 +1,8 @@
 name: tripwire
-version: 0.1.3
+version: 0.2.0
 manifest_version: 2
 api_version: 1
-description: Records refused agent actions to a shared file using only timestamp, profile/tool identifiers, event kind and rejection category or approval choice; no message or rule snippets, arguments, results or session ids. Fails open except for the explicit TEST_BLOCK drill switch.
+description: Records refused agent actions to a shared file using only timestamp, profile/tool identifiers, event kind and rejection category or approval choice; no message or rule snippets, arguments, results or session ids. Opt-in detail mode (off by default) adds a redacted refusal reason, an arguments hash and argument names, and an allowed-calls log; raw argument values are never stored. Fails open except for the explicit TEST_BLOCK drill switch.
 author: Deploy Axiom
 license: MIT
 requires_hermes: ">=0.22.5"

@@ -5,7 +5,8 @@ beside the effective event file ("<profile> <tool>"), used to prove the alarm.
 """
 import logging
 
-from .core import EVENTS, from_approval, from_tool_call, write_event
+from .core import (EVENTS, GatedTools, allowed_from_approval, allowed_from_tool_call, allowed_path,
+                   detail_enabled, from_approval, from_tool_call, write_event)
 
 log = logging.getLogger(__name__)
 TEST_FLAG = EVENTS.parent / "TEST_BLOCK"
@@ -13,14 +14,22 @@ TEST_FLAG = EVENTS.parent / "TEST_BLOCK"
 
 def register(ctx):
     profile = getattr(ctx, "profile_name", None) or "default"
+    gated = GatedTools()  # read on first detail-mode use, then at most hourly
 
     def post_tool_call(**kw):
         try:
+            detail = detail_enabled()
             ev = from_tool_call(profile, tool_name=kw.get("tool_name"), status=kw.get("status"),
                                 error_type=kw.get("error_type"), error_message=kw.get("error_message"),
-                                session_id=kw.get("session_id"))
+                                session_id=kw.get("session_id"), args=kw.get("args"), detail=detail)
             if ev:
                 write_event(ev)
+            elif detail:
+                allowed = allowed_from_tool_call(profile, tool_name=kw.get("tool_name"),
+                                                 status=kw.get("status"), args=kw.get("args"),
+                                                 session_id=kw.get("session_id"), gated=gated.get())
+                if allowed:
+                    write_event(allowed, allowed_path())
         except Exception as exc:  # fail open
             log.debug("tripwire post_tool_call: %s", exc)
 
@@ -30,6 +39,14 @@ def register(ctx):
                                surface=kw.get("surface"), session_key=kw.get("session_key"))
             if ev:
                 write_event(ev)
+            elif detail_enabled():
+                allowed = allowed_from_approval(profile, choice=kw.get("choice"),
+                                                pattern_key=kw.get("pattern_key"),
+                                                command=kw.get("command"),
+                                                session_id=kw.get("session_id"),
+                                                session_key=kw.get("session_key"))
+                if allowed:
+                    write_event(allowed, allowed_path())
         except Exception as exc:
             log.debug("tripwire post_approval_response: %s", exc)
 

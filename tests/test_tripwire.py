@@ -223,7 +223,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual((ROOT / "tripwire" / "LICENSE").read_bytes(), (ROOT / "LICENSE").read_bytes())
 
     def test_release_and_catalog_install_documentation(self):
-        self.assertIn("version: 0.1.3\n", (ROOT / "tripwire" / "plugin.yaml").read_text())
+        self.assertIn("version: 0.2.0\n", (ROOT / "tripwire" / "plugin.yaml").read_text())
         readme = (ROOT / "README.md").read_text()
         for command in ("hermes plugins install tripwire", "hermes plugins enable tripwire"):
             self.assertIn(command, readme)
@@ -262,7 +262,7 @@ class PathTests(unittest.TestCase):
 
     def test_reserved_event_filenames_are_rejected_without_modifying_data(self):
         with tempfile.TemporaryDirectory() as d:
-            for name in ("notify-offset", "TEST_BLOCK", "Notify-Offset", "test_block"):
+            for name in ("notify-offset", "TEST_BLOCK", "Notify-Offset", "test_block", "DETAIL", "allowed.jsonl"):
                 with self.subTest(name=name):
                     path = Path(d) / name
                     original = json.dumps(core.from_tool_call("ops", tool_name="terminal", status="blocked")) + "\n"
@@ -382,6 +382,230 @@ class NotifierTests(unittest.TestCase):
             first = self.run_notify(d)
             self.assertIn("TRIPWIRE: 5 refused action(s)", first)
             self.assertEqual(self.run_notify(d), "")
+
+
+HOOK_DRIVER = r"""
+import json, sys
+import tripwire
+class Ctx:
+    profile_name = "ops"
+    def __init__(self): self.hooks = {}
+    def register_hook(self, name, fn): self.hooks[name] = fn
+ctx = Ctx(); tripwire.register(ctx)
+for name, kwargs in json.load(sys.stdin):
+    ctx.hooks[name](**kwargs)
+"""
+
+COMMAND = "curl --data private-argument-value https://example.invalid/secret-path"
+
+
+def run_hooks(d, calls, **env_extra):
+    """Run hook calls in a fresh process (paths are fixed at import) against dir d."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TRIPWIRE_DETAIL", "TRIPWIRE_GATED_TOOLS", "TRIPWIRE_EVENTS")}
+    env.update(TRIPWIRE_DIR=str(d), **env_extra)
+    subprocess.run([sys.executable, "-c", HOOK_DRIVER], cwd=ROOT, env=env, check=True,
+                   input=json.dumps(calls), text=True, capture_output=True)
+
+
+def rows(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines()]
+
+
+def blocked_call(**over):
+    kw = dict(tool_name="terminal", status="blocked", error_type="plugin_block", session_id="sess_1",
+              args={"command": COMMAND, "nested": {"items": ["abcdefgh", "x"]}, "timeout": 30},
+              error_message=f"Policy denied: cannot run `{COMMAND}` here")
+    kw.update(over)
+    return ("post_tool_call", kw)
+
+
+class DetailModeTests(unittest.TestCase):
+    def test_default_off_writes_only_the_original_fields_and_no_allowed_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_hooks(d, [blocked_call(), ("post_tool_call", dict(tool_name="terminal", status="ok", args={"a": "bbbbbb"})),
+                          ("post_approval_response", dict(choice="once", pattern_key="p", command=COMMAND)),
+                          ("post_approval_response", dict(choice="deny", pattern_key="p", command=COMMAND))])
+            out = rows(Path(d) / "events.jsonl")
+            self.assertEqual(len(out), 2)
+            for event in out:
+                self.assertEqual(set(event), {"ts", "profile", "kind", "tool", "how"})
+            self.assertFalse((Path(d) / "allowed.jsonl").exists())
+
+    def test_core_off_output_is_byte_identical_to_before(self):
+        with_kw = core.from_tool_call("ops", tool_name="terminal", status="blocked", error_type="plugin_block",
+                                      error_message=COMMAND, session_id="s", now=1.0, args={"command": COMMAND})
+        self.assertEqual(json.dumps(with_kw),
+                         '{"ts": 1.0, "profile": "ops", "kind": "tool_blocked", "tool": "terminal", "how": "plugin_block"}')
+
+    def test_switch_env_file_and_reserved_values(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.jsonl"
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("TRIPWIRE_DETAIL", None)
+                self.assertFalse(core.detail_enabled(events))
+                (Path(d) / "DETAIL").write_text("")
+                self.assertTrue(core.detail_enabled(events))
+                (Path(d) / "DETAIL").unlink()
+                for value, expected in (("1", True), ("0", False), ("", False), ("true", False)):
+                    os.environ["TRIPWIRE_DETAIL"] = value
+                    self.assertEqual(core.detail_enabled(events), expected, value)
+
+    def test_detail_blocked_row_fields_and_no_raw_values(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_hooks(d, [blocked_call()], TRIPWIRE_DETAIL="1")
+            (event,) = rows(Path(d) / "events.jsonl")
+            self.assertEqual(set(event), {"ts", "profile", "kind", "tool", "how", "reason", "args_sha256",
+                                          "arg_keys", "session"})
+            self.assertEqual(event["arg_keys"], ["command", "nested", "timeout"])
+            self.assertEqual(event["session"], "sess_1")
+            self.assertEqual(len(event["args_sha256"]), 64)
+            self.assertEqual(event["reason"], "Policy denied: cannot run `<arg>` here")
+            stored = (Path(d) / "events.jsonl").read_text()
+            for raw in (COMMAND, "private-argument-value", "secret-path", "example.invalid", "abcdefgh"):
+                self.assertNotIn(raw, stored)
+
+    def test_detail_file_switch_without_env(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "DETAIL").write_text("")
+            run_hooks(d, [blocked_call()])
+            (event,) = rows(Path(d) / "events.jsonl")
+            self.assertIn("reason", event)
+
+    def test_hash_is_stable_across_key_order_and_matches_spec(self):
+        a = {"b": 1, "a": {"y": "é", "x": [1, 2]}}
+        b = {"a": {"x": [1, 2], "y": "é"}, "b": 1}
+        self.assertEqual(core.args_sha256(a), core.args_sha256(b))
+        blob = json.dumps(a, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+        import hashlib
+        self.assertEqual(core.args_sha256(a), hashlib.sha256(blob.encode()).hexdigest())
+        self.assertNotEqual(core.args_sha256(a), core.args_sha256({"b": 2, "a": a["a"]}))
+
+    def test_redaction_cases(self):
+        args = {"command": "rm -rf /tmp/some-long-directory/file.txt", "n": {"l": ["hunter2pw", "ab"]}, "k": 123456}
+        cases = [
+            "blocked: rm -rf /tmp/some-long-directory/file.txt",              # whole value
+            "blocked: '/tmp/some-long-directory/file.txt' is protected",      # token
+            "blocked path ...some-long-directory/file.t... (truncated)",      # 12+ char run, partial
+            "json: " + json.dumps({"error": "x /tmp/some-long-directory/file.txt \"q\""}),
+            "password hunter2pw rejected",                                    # nested list value
+        ]
+        for text in cases:
+            out = core.redact(text, args)
+            for raw in ("some-long-directory", "hunter2pw", "file.t"):
+                self.assertNotIn(raw, out, text)
+        self.assertIn("<arg>", core.redact(cases[4], args))
+        # short values are left alone; non-str reason is tolerated; cap applies after redaction
+        self.assertEqual(core.redact("ab is fine", args), "ab is fine")
+        self.assertEqual(core.redact(None, args), "")
+        long_text = "x" * 5000 + " hunter2pw"
+        self.assertEqual(len(core.redact(long_text, args)), 2000)
+        self.assertEqual(len(core.redact("y" * 3000, None)), 2000)
+
+    def test_redaction_catches_json_escaped_multiline_command(self):
+        command = 'echo "top secret line one"\nprintf \'second secret line\''
+        message = json.dumps({"error": f"refused: {command}"})
+        out = core.redact(message, {"command": command})
+        for raw in ("top secret", "secret line", "second"):
+            self.assertNotIn(raw, out)
+
+    def test_detail_off_ignores_args_even_if_passed(self):
+        ev = core.from_tool_call("ops", tool_name="t", status="blocked", args={"a": "abcdefgh"}, detail=False)
+        self.assertEqual(set(ev), {"ts", "profile", "kind", "tool", "how"})
+
+    def test_detail_files_are_owner_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = os.umask(0)
+            try:
+                run_hooks(d, [blocked_call(),
+                              ("post_tool_call", dict(tool_name="terminal", status="ok", args={"a": "bbbbbb"}))],
+                          TRIPWIRE_DETAIL="1")
+            finally:
+                os.umask(old)
+            for name in ("events.jsonl", "allowed.jsonl"):
+                self.assertEqual((Path(d) / name).stat().st_mode & 0o777, 0o600, name)
+
+    def test_allowed_tool_calls_only_for_gated_tools(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "events.jsonl").write_text(json.dumps(
+                {"ts": 1, "profile": "ops", "kind": "tool_blocked", "tool": "terminal", "how": "plugin_block"}) + "\n")
+            ok = dict(status="ok", session_id="s2", args={"command": COMMAND})
+            run_hooks(d, [("post_tool_call", dict(ok, tool_name="terminal")),
+                          ("post_tool_call", dict(ok, tool_name="read_file")),
+                          ("post_tool_call", dict(ok, tool_name="env_tool")),
+                          blocked_call(tool_name="env_tool")],
+                      TRIPWIRE_DETAIL="1", TRIPWIRE_GATED_TOOLS="env_tool, ")
+            allowed = rows(Path(d) / "allowed.jsonl")
+            self.assertEqual([r["tool"] for r in allowed], ["terminal", "env_tool"])
+            for r in allowed:
+                self.assertEqual(set(r), {"ts", "profile", "kind", "tool", "args_sha256", "arg_keys", "session"})
+                self.assertEqual((r["kind"], r["arg_keys"], r["session"]), ("allowed", ["command"], "s2"))
+            self.assertNotIn("private-argument-value", (Path(d) / "allowed.jsonl").read_text())
+            blocked = [r for r in rows(Path(d) / "events.jsonl") if "reason" in r]
+            self.assertEqual(len(blocked), 1)  # the blocked call is a trip, not an allowed row
+
+    def test_ignored_blocks_are_not_recorded_as_allowed(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_hooks(d, [blocked_call(error_type="suspected_pruned_tool_arguments")],
+                      TRIPWIRE_DETAIL="1", TRIPWIRE_GATED_TOOLS="terminal")
+            self.assertFalse((Path(d) / "allowed.jsonl").exists())
+            self.assertFalse((Path(d) / "events.jsonl").exists())
+
+    def test_gated_set_refreshes_at_most_hourly(self):
+        calls = []
+        gated = core.GatedTools(loader=lambda events: calls.append(1) or {"t"})
+        self.assertEqual(gated.get(now=1000.0), {"t"})
+        gated.get(now=1000.0 + 3599)
+        self.assertEqual(len(calls), 1)
+        gated.get(now=1000.0 + 3600)
+        self.assertEqual(len(calls), 2)
+
+    def test_approval_grants_are_allowed_rows_and_refusals_are_not(self):
+        with tempfile.TemporaryDirectory() as d:
+            kw = dict(pattern_key="script execution via heredoc", command=COMMAND, session_id="s3",
+                      session_key="agent:main:telegram:dm:1")
+            run_hooks(d, [("post_approval_response", dict(kw, choice="once")),
+                          ("post_approval_response", dict(kw, choice="always", pattern_key=COMMAND)),
+                          ("post_approval_response", dict(kw, choice="smart_approve", pattern_key="rm_rf")),
+                          ("post_approval_response", dict(kw, choice="notify_failed")),
+                          ("post_approval_response", dict(kw, choice="deny"))],
+                      TRIPWIRE_DETAIL="1")
+            allowed = rows(Path(d) / "allowed.jsonl")
+            self.assertEqual([r["choice"] for r in allowed], ["once", "always", "smart_approve"])
+            for r in allowed:
+                self.assertEqual(set(r), {"ts", "profile", "kind", "tool", "args_sha256", "arg_keys", "session",
+                                          "choice", "pattern"})
+                self.assertEqual((r["kind"], r["tool"], r["session"]), ("allowed", "terminal/approval", "s3"))
+            self.assertEqual(allowed[0]["pattern"], "script execution via heredoc")
+            self.assertEqual(allowed[1]["pattern"], "<arg>")
+            self.assertEqual(allowed[2]["pattern"], "rm_rf")
+            stored = (Path(d) / "allowed.jsonl").read_text()
+            for raw in (COMMAND, "private-argument-value", "secret-path", "telegram"):
+                self.assertNotIn(raw, stored)
+            refused = rows(Path(d) / "events.jsonl")
+            self.assertEqual([r["how"] for r in refused], ["deny"])
+            self.assertEqual(set(refused[0]), {"ts", "profile", "kind", "tool", "how"})
+
+    def test_notifier_parses_detail_rows_and_ignores_extra_fields(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_hooks(d, [blocked_call(), ("post_tool_call", dict(tool_name="terminal", status="ok", args={}))],
+                      TRIPWIRE_DETAIL="1")
+            result = subprocess.run([sys.executable, str(ROOT / "scripts" / "tripwire_notify.py")],
+                                    env=dict(os.environ, TRIPWIRE_DIR=d), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
+            self.assertIn("TRIPWIRE: 1 refused action(s)", result.stdout)
+            self.assertIn("ops: terminal stopped (plugin_block).", result.stdout)
+            self.assertNotIn("Policy denied", result.stdout)
+            self.assertNotIn("private-argument-value", result.stdout)
+            self.assertEqual(result.stdout.count("\n- "), 1)
+
+    def test_hook_failures_fail_open_in_detail_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_hooks(d, [("post_tool_call", dict(tool_name="terminal", status="blocked", args=["x", 1.5, None],
+                                                  error_message=123, session_id=5)),
+                          ("post_approval_response", dict(choice=["x"], command=None))],
+                      TRIPWIRE_DETAIL="1")
 
 
 if __name__ == "__main__":

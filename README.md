@@ -22,6 +22,26 @@ One line per refusal, with exactly five fields: timestamp (`ts`), agent profile 
 - **Not alerted:** housekeeping blocks tagged `suspected_pruned_tool_arguments`, and `tool_scope_block` rejections matching the host's complete `tool_call to '…' failed argument validation at arguments… (…): ….` or `tool_call to '…' is missing required argument(s): ….` typo templates, both ending `The tool was NOT invoked.`. The matcher accepts bare errors, the `error` field of host JSON, and the sequential form with its JSON parameters schema and retry hint. Other categories, `Policy denied:` prefixes (including inside JSON), malformed wrappers or unrecognized message shapes still alert. New typo rejections are not written; the notifier applies the same narrow filter to legacy records.
 - **Known gap:** if a model calls a tool that isn't in its toolset at all, Hermes rejects the call before any plugin hook runs, so Tripwire doesn't see it.
 
+## Optional detail mode (off by default)
+
+The sections above describe the default. Unless you opt in here, nothing below applies. Detail mode is an explicit opt-in for owners who want to see *why* something was refused and what else passed through the same gates. Turn it on with either of these (checked on every event, so no restart is needed to toggle it once 0.2.0 is loaded):
+
+- environment variable `TRIPWIRE_DETAIL=1` in the agent process, or
+- an empty file named `DETAIL` beside the effective event file (`~/.hermes/tripwire/DETAIL` by default). Remove it to turn detail mode off.
+
+With detail mode on:
+
+- **Refusal rows (`events.jsonl`) gain four additive fields:**
+  - `reason`: the refusal/error text, redacted then cut to 2000 characters. Redaction replaces every string argument value of the call (searched recursively; values of 4+ characters), each whitespace-separated 4+ character token of those values, and any 12+ character run of a long value found in the text, with `<arg>`. Values are matched as written and as JSON-escaped. This is a best-effort text match, not a guarantee: a refusal message that transforms an argument (hashes, abbreviates, re-encodes it) or contains other sensitive text of its own is not caught. Do not enable this where refusal text can carry secrets.
+  - `args_sha256`: SHA-256 of the call's arguments as canonical JSON (`sort_keys`, compact separators). Unsalted: a low-entropy argument can be confirmed by guessing it, so treat the hash as sensitive too.
+  - `arg_keys`: sorted top-level argument names (identifier-shaped; others become `unknown`).
+  - `session`: the session id (identifier-shaped, else `unknown`).
+- **Allowed calls go to a second file, `allowed.jsonl`, beside the event file** (same 0600 owner-only, locked append, symlink-refusing write). Two kinds of row, each with `ts`, `profile`, `kind` = `allowed`, `tool`, `args_sha256`, `arg_keys`, `session`:
+  - approvals that were granted (`once`, `session`, `always`, ...), with `choice` and `pattern` (the approval rule name, identifier-shaped or redacted against the command and cut to 120 characters). The command itself is only hashed.
+  - calls that were not blocked, for "gated" tools only: tool names seen in any row of `events.jsonl` (read on first use, refreshed at most hourly) plus the comma-separated `TRIPWIRE_GATED_TOOLS`. Tools that were never refused are not recorded unless you list them.
+- Raw argument values, commands and results are never written in either file. The notifier does not read `allowed.jsonl`, and its alerts are unchanged; it ignores the extra fields.
+- `allowed.jsonl` and `DETAIL` are reserved filenames for `TRIPWIRE_EVENTS`. Existing rows are never rewritten, and turning detail mode off stops new detail from being written but does not erase what is already there.
+
 ## Before you install
 
 - **Files it writes:** one line per refusal to `~/.hermes/tripwire/events.jsonl` by default, shared across profiles. Data directories are created as 0700 and the event file as 0600; existing data-directory/event-file modes are tightened before appending. Event-file symlinks are refused. The optional notifier reads that file and its `notify-offset` cursor, and writes a 0600 temporary cursor then atomically replaces `notify-offset` in the same directory. It does not erase or rotate events.
@@ -46,7 +66,7 @@ hermes -p <profile> plugins install tripwire
 hermes -p <profile> plugins enable tripwire
 ```
 
-Check the installed version and record the exact 40-hex commit shown at installation. This README describes 0.1.3; if the catalog still points at an older version, these fixes are not installed yet. Do not replace a reviewed pin with a branch-tip install to work around that. The catalog installs the `tripwire/` subtree, including its MIT `LICENSE`.
+Check the installed version and record the exact 40-hex commit shown at installation. This README describes 0.2.0; if the catalog still points at an older version, these fixes are not installed yet. Do not replace a reviewed pin with a branch-tip install to work around that. The catalog installs the `tripwire/` subtree, including its MIT `LICENSE`.
 
 ### Optional notifier (separate download)
 
