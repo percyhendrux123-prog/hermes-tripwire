@@ -15,7 +15,7 @@ from pathlib import Path
 
 BASE = Path(os.environ.get("TRIPWIRE_DIR") or Path.home() / ".hermes" / "tripwire")
 EVENTS = Path(os.environ.get("TRIPWIRE_EVENTS") or BASE / "events.jsonl").expanduser()
-if EVENTS.name.casefold() in {"notify-offset", "test_block"}:
+if EVENTS.name.casefold() in {"notify-offset", "test_block", "detail", "allowed.jsonl"}:
     raise ValueError("TRIPWIRE_EVENTS uses a reserved cursor/drill filename")
 STATE = EVENTS.parent / "notify-offset"
 # Typo-level rejections (wrong/missing argument name, bounced before running).
