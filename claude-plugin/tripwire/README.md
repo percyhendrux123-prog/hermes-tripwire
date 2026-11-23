@@ -41,7 +41,7 @@ Example line:
 
 ```
 claude plugin marketplace add percyhendrux123-prog/hermes-tripwire
-claude plugin install tripwire@deploy-axiom-tripwire
+claude plugin install axiom-tripwire@deploy-axiom-tripwire
 ```
 
 To try it for one session without installing, point Claude Code at the plugin folder:

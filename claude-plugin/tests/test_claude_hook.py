@@ -253,7 +253,7 @@ class TestManifests(unittest.TestCase):
 
     def test_plugin_json_fields(self):
         manifest = self.load(".claude-plugin", "plugin.json")
-        self.assertEqual(manifest["name"], "tripwire")
+        self.assertEqual(manifest["name"], "axiom-tripwire")
         self.assertRegex(manifest["name"], r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
         self.assertEqual(manifest["version"], "0.1.0")
         self.assertEqual(manifest["license"], "MIT")
@@ -280,7 +280,7 @@ class TestManifests(unittest.TestCase):
         with open(os.path.join(os.path.dirname(root), ".claude-plugin", "marketplace.json"),
                   encoding="utf-8") as handle:
             market = json.load(handle)
-        self.assertEqual(market["plugins"][0]["name"], "tripwire")
+        self.assertEqual(market["plugins"][0]["name"], "axiom-tripwire")
         self.assertTrue(os.path.isfile(os.path.join(os.path.dirname(root), market["plugins"][0]["source"],
                                                     ".claude-plugin", "plugin.json")))
 

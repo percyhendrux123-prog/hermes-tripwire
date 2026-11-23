@@ -142,7 +142,7 @@ The same idea ships as a Claude Code plugin in [`claude-plugin/tripwire`](claude
 
 ```sh
 claude plugin marketplace add percyhendrux123-prog/hermes-tripwire
-claude plugin install tripwire@deploy-axiom-tripwire
+claude plugin install axiom-tripwire@deploy-axiom-tripwire
 ```
 
 ## Works with

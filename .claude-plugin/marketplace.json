@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "name": "tripwire",
+      "name": "axiom-tripwire",
       "source": "./claude-plugin/tripwire",
       "description": "Writes one private log line each time Claude Code's auto mode refuses a tool call."
     }
