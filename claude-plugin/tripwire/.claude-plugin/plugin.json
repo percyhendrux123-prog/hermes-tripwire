@@ -1,0 +1,21 @@
+{
+  "name": "axiom-tripwire",
+  "displayName": "Tripwire",
+  "version": "0.1.0",
+  "description": "Writes one private log line each time Claude Code's auto mode refuses a tool call. Five identifier fields only: no commands, arguments, paths or messages.",
+  "author": {
+    "name": "Deploy Axiom"
+  },
+  "homepage": "https://github.com/percyhendrux123-prog/hermes-tripwire",
+  "repository": "https://github.com/percyhendrux123-prog/hermes-tripwire",
+  "license": "MIT",
+  "keywords": [
+    "audit",
+    "refusals",
+    "permissions",
+    "auto-mode",
+    "hooks",
+    "logging"
+  ],
+  "icon": "./.claude-plugin/icon.png"
+}

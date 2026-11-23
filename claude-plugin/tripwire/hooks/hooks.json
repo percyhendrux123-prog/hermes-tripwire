@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/tripwire_hook.py"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

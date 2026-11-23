@@ -1,0 +1,16 @@
+{
+  "name": "deploy-axiom-tripwire",
+  "owner": {
+    "name": "Deploy Axiom"
+  },
+  "metadata": {
+    "description": "Tripwire for Claude Code, from Deploy Axiom."
+  },
+  "plugins": [
+    {
+      "name": "axiom-tripwire",
+      "source": "./claude-plugin/tripwire",
+      "description": "Writes one private log line each time Claude Code's auto mode refuses a tool call."
+    }
+  ]
+}
